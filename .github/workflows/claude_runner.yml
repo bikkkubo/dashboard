@@ -40,3 +40,45 @@ jobs:
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || env.OPENAI_MODEL }}
           GITHUB_TOKEN: ${{ github.token }}
         run: npm run run:claude
+name: Claude IssueOps Runner
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  run-claude:
+    if: contains(join(github.event.issue.labels.*.name, ','), 'claude-code')
+    runs-on: ubuntu-latest
+    env:
+      PROVIDER: stub
+      ANTHROPIC_MODEL: claude-3-5-sonnet-20240620
+      OPENAI_MODEL: gpt-4o-mini
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Claude task
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || env.ANTHROPIC_MODEL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || env.OPENAI_MODEL }}
+          GITHUB_TOKEN: ${{ secrets.BOT_TOKEN || github.token }}
+        run: npm run run:claude
