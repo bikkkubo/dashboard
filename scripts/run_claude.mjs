@@ -170,7 +170,8 @@ Given a GitHub Issue body, produce the requested artifacts in a concise, actiona
     // Prepare git commit on a new branch
     await ensureGitIdentity();
     await checkoutBranch(branchName);
-    await execFile('git', ['add', path.relative(repoRoot, artifactPath)], { cwd: repoRoot });
+    // Force-add artifact even if artifacts/ is in .gitignore
+    await execFile('git', ['add', '-f', path.relative(repoRoot, artifactPath)], { cwd: repoRoot });
     await execFile('git', ['commit', '-m', `chore(claude): artifacts for issue #${issueNumber}`], { cwd: repoRoot });
 
     // Determine default branch for PR base
@@ -217,4 +218,3 @@ Given a GitHub Issue body, produce the requested artifacts in a concise, actiona
 }
 
 run();
-
