@@ -11,8 +11,12 @@ permissions:
 
 jobs:
   run-claude:
-    if: contains(github.event.issue.labels.*.name, 'claude-code')
+    if: contains(join(github.event.issue.labels.*.name, ','), 'claude-code')
     runs-on: ubuntu-latest
+    env:
+      PROVIDER: stub
+      ANTHROPIC_MODEL: claude-3-5-sonnet-20240620
+      OPENAI_MODEL: gpt-4o-mini
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,7 +35,8 @@ jobs:
       - name: Run Claude task
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || env.ANTHROPIC_MODEL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || env.OPENAI_MODEL }}
           GITHUB_TOKEN: ${{ github.token }}
         run: npm run run:claude
-

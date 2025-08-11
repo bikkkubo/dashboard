@@ -29,7 +29,7 @@ async function backoffFetch(url, options, retries = 2) {
       const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
       const bodyText = await res.text().catch(() => '');
       lastErr = new Error(`HTTP ${res.status}: ${bodyText}`);
-      log(`Anthropic error: ${lastErr.message}. Retry in ${delay}ms (attempt ${attempt + 1}/${retries + 1})`);
+      log(`API error: ${lastErr.message}. Retry in ${delay}ms (attempt ${attempt + 1}/${retries + 1})`);
       await sleep(delay);
       attempt++;
       continue;
@@ -37,7 +37,7 @@ async function backoffFetch(url, options, retries = 2) {
     const text = await res.text().catch(() => '');
     throw new Error(`HTTP ${res.status}: ${text}`);
   }
-  throw lastErr || new Error('Unknown error contacting Anthropic');
+  throw lastErr || new Error('Unknown error contacting provider');
 }
 
 function getEnv(name, required = false) {
@@ -110,8 +110,11 @@ async function run() {
   const issueTitle = issue?.title || '';
   const issueBody = issue?.body || '';
 
+  const provider = (getEnv('PROVIDER') || 'stub').toLowerCase();
   const anthropicKey = getEnv('ANTHROPIC_API_KEY');
   const anthropicModel = getEnv('ANTHROPIC_MODEL') || 'claude-3-5-sonnet-20240620';
+  const openaiKey = getEnv('OPENAI_API_KEY');
+  const openaiModel = getEnv('OPENAI_MODEL') || 'gpt-4o-mini';
 
   const octokitToken = getEnv('GITHUB_TOKEN');
   const octokit = octokitToken ? new Octokit({ auth: octokitToken }) : new Octokit();
@@ -134,32 +137,62 @@ Given a GitHub Issue body, produce the requested artifacts in a concise, actiona
   let baseBranch = 'main';
 
   try {
-    if (!anthropicKey) throw new Error('ANTHROPIC_API_KEY not set');
     if (!issueBody) throw new Error('Issue body is empty');
 
-    // Call Anthropic Messages API with retry
-    const reqBody = {
-      model: anthropicModel,
-      max_tokens: 4096,
-      temperature: 0.2,
-      system: systemPrompt,
-      messages: [
-        { role: 'user', content: issueBody }
-      ]
-    };
-    const res = await backoffFetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': anthropicKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify(reqBody)
-    });
-    const data = await res.json();
-    const parts = Array.isArray(data.content) ? data.content : [];
-    contentMd = parts.map(p => (p.type === 'text' ? p.text : '')).join('\n\n');
-    if (!contentMd?.trim()) throw new Error('Anthropic returned empty content');
+    if (provider === 'anthropic') {
+      if (!anthropicKey) throw new Error('ANTHROPIC_API_KEY not set');
+      // Call Anthropic Messages API with retry
+      const reqBody = {
+        model: anthropicModel,
+        max_tokens: 4096,
+        temperature: 0.2,
+        system: systemPrompt,
+        messages: [
+          { role: 'user', content: issueBody }
+        ]
+      };
+      const res = await backoffFetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': anthropicKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify(reqBody)
+      });
+      const data = await res.json();
+      const parts = Array.isArray(data.content) ? data.content : [];
+      contentMd = parts.map(p => (p.type === 'text' ? p.text : '')).join('\n\n');
+      if (!contentMd?.trim()) throw new Error('Anthropic returned empty content');
+    } else if (provider === 'openai') {
+      if (!openaiKey) throw new Error('OPENAI_API_KEY not set');
+      const sys = 'あなたは熟練のソフトウェアエンジニアです。出力は日本語で、必要なコードは完全なファイル内容を Markdown とコードブロックで示してください。冗長さを避け、実行/適用可能な形でまとめてください。';
+      const reqBody = {
+        model: openaiModel,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: sys },
+          { role: 'user', content: issueBody }
+        ]
+      };
+      const res = await backoffFetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'authorization': `Bearer ${openaiKey}`
+        },
+        body: JSON.stringify(reqBody)
+      });
+      const data = await res.json();
+      const choice = data?.choices?.[0]?.message?.content;
+      contentMd = (choice || '').toString();
+      if (!contentMd?.trim()) throw new Error('OpenAI returned empty content');
+    } else {
+      // stub mode: produce a deterministic markdown without external calls
+      const excerpt = issueBody.replace(/\r/g, '').slice(0, 400);
+      const bullets = excerpt.split(/\n+/).slice(0, 8).map(l => `- ${l.trim().slice(0, 140)}`).join('\n');
+      contentMd = `[STUB OUTPUT]\n\n## 自動実行の検証用ダミー出力\n\n### 概要\n- これは配管検証用のダミー出力です\n- PROVIDER=stub で生成されています\n\n### 入力サマリ\n${bullets || '- (入力なし)'}\n\n### 次の手順\n- この PR をレビューして配管を確認する\n- PROVIDER=anthropic or openai に切替えて本番検証\n\n✅ Pipeline OK（stub）`;
+    }
 
     // Write artifact
     await fs.mkdir(artifactDir, { recursive: true });
@@ -190,7 +223,7 @@ Given a GitHub Issue body, produce the requested artifacts in a concise, actiona
     // Create PR
     if (owner && repo) {
       const prTitle = `chore(claude): add artifacts for issue #${issueNumber}`;
-      const prBody = `This PR adds generated artifacts for issue #${issueNumber}.\n\n- Artifact: \`${path.posix.join('artifacts', `issue-${issueNumber}`, 'output.md')}\`\n- Model: \`${anthropicModel}\``;
+      const prBody = `This PR adds generated artifacts for issue #${issueNumber}.\n\n- Artifact: \`${path.posix.join('artifacts', `issue-${issueNumber}`, 'output.md')}\`\n- Provider: \`${provider}\`\n- Model: \`${provider === 'anthropic' ? anthropicModel : provider === 'openai' ? openaiModel : 'stub'}\``;
       const pr = await octokit.pulls.create({ owner, repo, title: prTitle, head: branchName, base: baseBranch, body: prBody });
       prUrl = pr.data.html_url;
       prNumber = pr.data.number;
@@ -199,7 +232,7 @@ Given a GitHub Issue body, produce the requested artifacts in a concise, actiona
 
     // Comment on issue
     if (owner && repo && issueNumber) {
-      const body = `Completed. Generated artifacts saved to \`${path.posix.join('artifacts', `issue-${issueNumber}`, 'output.md')}\`.\n${prUrl ? `Opened PR: ${prUrl}` : 'PR creation skipped.'}`;
+      const body = `Completed. Generated artifacts saved to \`${path.posix.join('artifacts', `issue-${issueNumber}`, 'output.md')}\`.\nProvider=\`${provider}\`${prUrl ? `\nOpened PR: ${prUrl}` : '\nPR creation skipped.'}`;
       await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body });
     }
   } catch (err) {
