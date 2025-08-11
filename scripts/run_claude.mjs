@@ -224,15 +224,22 @@ Given a GitHub Issue body, produce the requested artifacts in a concise, actiona
     if (owner && repo) {
       const prTitle = `chore(claude): add artifacts for issue #${issueNumber}`;
       const prBody = `This PR adds generated artifacts for issue #${issueNumber}.\n\n- Artifact: \`${path.posix.join('artifacts', `issue-${issueNumber}`, 'output.md')}\`\n- Provider: \`${provider}\`\n- Model: \`${provider === 'anthropic' ? anthropicModel : provider === 'openai' ? openaiModel : 'stub'}\``;
-      const pr = await octokit.pulls.create({ owner, repo, title: prTitle, head: branchName, base: baseBranch, body: prBody });
-      prUrl = pr.data.html_url;
-      prNumber = pr.data.number;
-      log(`Created PR: ${prUrl}`);
+      try {
+        const pr = await octokit.pulls.create({ owner, repo, title: prTitle, head: branchName, base: baseBranch, body: prBody });
+        prUrl = pr.data.html_url;
+        prNumber = pr.data.number;
+        log(`Created PR: ${prUrl}`);
+      } catch (e) {
+        const msg = e?.message || String(e);
+        log(`PR creation skipped: ${msg}`);
+        // Continue without failing; include manual PR link in the issue comment below
+      }
     }
 
     // Comment on issue
     if (owner && repo && issueNumber) {
-      const body = `Completed. Generated artifacts saved to \`${path.posix.join('artifacts', `issue-${issueNumber}`, 'output.md')}\`.\nProvider=\`${provider}\`${prUrl ? `\nOpened PR: ${prUrl}` : '\nPR creation skipped.'}`;
+      const manualPrUrl = `https://github.com/${owner}/${repo}/compare/${encodeURIComponent(baseBranch)}...${encodeURIComponent(branchName)}?expand=1`;
+      const body = `Completed. Generated artifacts saved to \`${path.posix.join('artifacts', `issue-${issueNumber}`, 'output.md')}\`.\nProvider=\`${provider}\`${prUrl ? `\nOpened PR: ${prUrl}` : `\nPR creation skipped. Open manually: ${manualPrUrl}`}`;
       await octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body });
     }
   } catch (err) {
