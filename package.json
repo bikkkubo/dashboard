@@ -1,0 +1,12 @@
+{
+  "name": "dashboard-issueops",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "run:claude": "node scripts/run_claude.mjs"
+  },
+  "dependencies": {
+    "@octokit/rest": "^20.0.0",
+    "node-fetch": "^3.3.2"
+  }
+}
